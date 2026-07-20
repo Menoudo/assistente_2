@@ -1,5 +1,7 @@
 # waiting-mcp
 
+[![Tests](https://github.com/Menoudo/assistente_2/actions/workflows/test.yml/badge.svg)](https://github.com/Menoudo/assistente_2/actions/workflows/test.yml)
+
 MCP-сервер для управления списком GTD **Waiting For** («Ожидаю»). Все данные хранятся в markdown-файлах с фиксированной структурой: один файл на ожидание, отдельные файлы людей.
 
 ## Возможности
