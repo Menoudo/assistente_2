@@ -23,7 +23,7 @@ func TestWaitingLifecycle(t *testing.T) {
 		DefaultCheckCadence: domain.CadenceWeekly,
 		Active:              true,
 	}
-	if err := store.UpsertPerson(ctx, person); err != nil {
+	if err := store.UpsertPerson(ctx, person, false); err != nil {
 		t.Fatalf("upsert person: %v", err)
 	}
 
@@ -105,7 +105,7 @@ func TestListWaitingDueFilter(t *testing.T) {
 		Relation:            domain.RelationAssistant,
 		DefaultCheckCadence: domain.CadenceWeekly,
 		Active:              true,
-	}); err != nil {
+	}, false); err != nil {
 		t.Fatalf("upsert person: %v", err)
 	}
 

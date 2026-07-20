@@ -18,6 +18,7 @@ Options:
   --examples         Copy example markdown files from the repository
   --cursor-global    Add or update the "waiting" server in ~/.cursor/mcp.json
   --cursor-project   Write .cursor/mcp.json into <target-dir>
+  --copy-binary      Copy ./waiting-mcp from the repository instead of building
   --force            Overwrite existing binary
   -h, --help         Show this help
 
@@ -119,9 +120,58 @@ with open(config_path, "w", encoding="utf-8") as handle:
 PY
 }
 
+prepare_build_env() {
+	local limits=(65536 32768 16384 8192 4096)
+	local limit
+	for limit in "${limits[@]}"; do
+		if ulimit -n "${limit}" 2>/dev/null; then
+			log "file descriptor limit: $(ulimit -n)"
+			return 0
+		fi
+	done
+	log "warning: could not raise file descriptor limit"
+}
+
+build_binary() {
+	prepare_build_env
+	(
+		cd "${ROOT}"
+		GOMAXPROCS=1 go build -p 1 -trimpath -o "${BIN_PATH}" ./cmd/waiting-mcp
+	)
+}
+
+copy_local_binary() {
+	local source="${ROOT}/waiting-mcp"
+	[[ -f "${source}" ]] || die "local binary not found: ${source} (run: go build -o waiting-mcp ./cmd/waiting-mcp)"
+	install -m 755 "${source}" "${BIN_PATH}"
+}
+
+install_binary() {
+	if [[ "${COPY_BINARY}" -eq 1 ]]; then
+		log "copying local binary..."
+		copy_local_binary
+		return
+	fi
+
+	log "building waiting-mcp..."
+	if build_binary; then
+		return
+	fi
+
+	local local_binary="${ROOT}/waiting-mcp"
+	if [[ -f "${local_binary}" ]]; then
+		log "build failed, falling back to repository binary..."
+		copy_local_binary
+		return
+	fi
+
+	die "build failed (often caused by 'too many open files'); try: ulimit -n 8192, or build manually and rerun with --copy-binary"
+}
+
 WITH_EXAMPLES=0
 CURSOR_GLOBAL=0
 CURSOR_PROJECT=0
+COPY_BINARY=0
 FORCE=0
 TARGET=""
 
@@ -141,6 +191,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--force)
 		FORCE=1
+		shift
+		;;
+	--copy-binary)
+		COPY_BINARY=1
 		shift
 		;;
 	-h | --help)
@@ -165,8 +219,10 @@ done
 	exit 1
 }
 
-require_cmd go
 require_cmd python3
+if [[ "${COPY_BINARY}" -ne 1 ]]; then
+	require_cmd go
+fi
 
 ROOT="$(repo_root)"
 TARGET_DIR="$(resolve_path "${TARGET}")"
@@ -181,11 +237,7 @@ if [[ -f "${BIN_PATH}" && "${FORCE}" -ne 1 ]]; then
 	die "binary already exists: ${BIN_PATH} (use --force to overwrite)"
 fi
 
-log "building waiting-mcp..."
-(
-	cd "${ROOT}"
-	go build -o "${BIN_PATH}" ./cmd/waiting-mcp
-)
+install_binary
 
 if [[ "${WITH_EXAMPLES}" -eq 1 ]]; then
 	log "copying example data..."

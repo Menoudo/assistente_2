@@ -34,7 +34,7 @@ func TestRenderAndParseWaitingBody(t *testing.T) {
 	if err := store.UpsertPerson(t.Context(), domain.Person{
 		ID: "dev", Name: "Dev", Relation: domain.RelationDeveloper,
 		DefaultCheckCadence: domain.CadenceWeekly, Active: true,
-	}); err != nil {
+	}, false); err != nil {
 		t.Fatalf("upsert person: %v", err)
 	}
 	if err := store.CreateWaiting(t.Context(), waiting); err != nil {
