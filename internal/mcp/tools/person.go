@@ -25,6 +25,7 @@ type PersonUpsertInput struct {
 	Contact             string `json:"contact,omitempty"`
 	Active              *bool  `json:"active,omitempty"`
 	Notes               string `json:"notes,omitempty"`
+	Force               bool   `json:"force,omitempty" jsonschema:"allow overwriting an existing person with the same id"`
 }
 
 type PersonIDInput struct {
@@ -87,7 +88,7 @@ func (t *PersonTools) Upsert(ctx context.Context, req *mcp.CallToolRequest, inpu
 	if !isNew {
 		person.CreatedAt = existing.CreatedAt
 	}
-	if err := t.repo.UpsertPerson(ctx, person); err != nil {
+	if err := t.repo.UpsertPerson(ctx, person, input.Force); err != nil {
 		return nil, PersonResponse{}, err
 	}
 	saved, err := t.repo.GetPerson(ctx, person.ID)

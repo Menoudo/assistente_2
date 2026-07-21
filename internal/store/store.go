@@ -15,7 +15,7 @@ type Repository interface {
 	RecordCheck(ctx context.Context, id string, record domain.CheckRecord, nextCheck time.Time, blocker *string, promisedDeadline *time.Time) error
 	SetWaitingStatus(ctx context.Context, id string, status domain.Status, record *domain.CheckRecord) error
 
-	UpsertPerson(ctx context.Context, person domain.Person) error
+	UpsertPerson(ctx context.Context, person domain.Person, force bool) error
 	GetPerson(ctx context.Context, id string) (domain.Person, error)
 	ListPeople(ctx context.Context) ([]domain.Person, error)
 

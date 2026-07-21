@@ -510,7 +510,7 @@ func ToolError(err error) (*mcp.CallToolResult, any, error) {
 	if errors.Is(err, domain.ErrNotFound) {
 		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
 	}
-	if errors.Is(err, domain.ErrAlreadyExists) || errors.Is(err, domain.ErrInvalidInput) || errors.Is(err, domain.ErrResponsibleAbsent) {
+	if errors.Is(err, domain.ErrAlreadyExists) || errors.Is(err, domain.ErrInvalidInput) || errors.Is(err, domain.ErrResponsibleAbsent) || errors.Is(err, domain.ErrOverwriteForbidden) || errors.Is(err, domain.ErrNameNotUnique) {
 		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
 	}
 	return nil, nil, err

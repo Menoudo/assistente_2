@@ -2,6 +2,7 @@ package markdown
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -10,19 +11,91 @@ import (
 	"github.com/priahin-i/assistente_2/internal/domain"
 )
 
-func (s *Store) UpsertPerson(ctx context.Context, person domain.Person) error {
+func normalizePersonName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func validatePersonID(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("%w: id is required", domain.ErrInvalidInput)
+	}
+	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
+		return fmt.Errorf("%w: invalid person id %q", domain.ErrInvalidInput, id)
+	}
+	return nil
+}
+
+func (s *Store) findPersonIDByName(excludeID, name string) (string, error) {
+	normalized := normalizePersonName(name)
+	if normalized == "" {
+		return "", fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+
+	entries, err := os.ReadDir(s.peopleDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".md")
+		if id == excludeID {
+			continue
+		}
+		person, err := s.readPerson(id)
+		if err != nil {
+			return "", err
+		}
+		if normalizePersonName(person.Name) == normalized {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+func (s *Store) UpsertPerson(ctx context.Context, person domain.Person, force bool) error {
 	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := validatePersonID(person.ID); err != nil {
+		return err
+	}
 	if err := s.ensureDirs(); err != nil {
 		return err
 	}
+
+	exists := false
 	if _, err := os.Stat(s.personPath(person.ID)); err == nil {
-		person.UpdatedAt = time.Now().UTC()
-		return s.writePerson(person)
+		exists = true
 	} else if !os.IsNotExist(err) {
 		return err
+	}
+
+	if exists && !force {
+		return domain.ErrOverwriteForbidden
+	}
+
+	if duplicateID, err := s.findPersonIDByName(person.ID, person.Name); err != nil {
+		return err
+	} else if duplicateID != "" {
+		return fmt.Errorf("%w: already used by person %q", domain.ErrNameNotUnique, duplicateID)
+	}
+
+	if exists {
+		existing, err := s.readPerson(person.ID)
+		if err != nil {
+			return err
+		}
+		person.CreatedAt = existing.CreatedAt
+		person.UpdatedAt = time.Now().UTC()
+		return s.writePerson(person)
 	}
 	if person.CreatedAt.IsZero() {
 		person.CreatedAt = time.Now().UTC()

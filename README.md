@@ -29,6 +29,35 @@ data/
 go build -o waiting-mcp ./cmd/waiting-mcp
 ```
 
+## Развёртывание
+
+Скрипт собирает бинарник и создаёт структуру каталогов в указанном месте:
+
+```bash
+chmod +x ./scripts/deploy.sh
+./scripts/deploy.sh ~/gtd/waiting-mcp
+```
+
+Опции:
+
+```bash
+# с примерами markdown и глобальным MCP-конфигом Cursor
+./scripts/deploy.sh --examples --cursor-global ~/gtd/waiting-mcp
+
+# если <target-dir> — корень workspace, можно положить .cursor/mcp.json
+./scripts/deploy.sh --cursor-project ~/projects/my-gtd
+```
+
+Структура после deploy:
+
+```
+<target-dir>/
+├── bin/waiting-mcp
+└── data/
+    ├── waiting/
+    └── people/
+```
+
 ## Запуск
 
 ### stdio (для Cursor)
