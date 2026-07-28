@@ -41,6 +41,7 @@ type WaitingListInput struct {
 	Responsible string `json:"responsible,omitempty" jsonschema:"filter by person id"`
 	Context     string `json:"context,omitempty" jsonschema:"work or personal"`
 	DueBefore   string `json:"due_before,omitempty" jsonschema:"filter next_check on or before date YYYY-MM-DD"`
+	IncludeDone bool   `json:"include_done,omitempty" jsonschema:"include completed items from waiting/done/"`
 }
 
 type WaitingUpdateInput struct {
@@ -367,6 +368,7 @@ func (t *WaitingTools) ReviewDue(ctx context.Context, req *mcp.CallToolRequest, 
 func toWaitingFilter(input WaitingListInput) (domain.WaitingFilter, error) {
 	filter := domain.WaitingFilter{
 		Responsible: input.Responsible,
+		IncludeDone: input.IncludeDone,
 	}
 	if input.Status != "" {
 		status := domain.Status(input.Status)

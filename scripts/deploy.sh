@@ -11,7 +11,10 @@ Deploy waiting-mcp binary and data layout into <target-dir>.
 Layout:
   <target-dir>/
     bin/waiting-mcp
+    README.md
+    CHANGELOG.md
     data/waiting/
+    data/waiting/done/
     data/people/
 
 Options:
@@ -65,6 +68,16 @@ copy_examples() {
 	fi
 	cp -R "${source_dir}/waiting/." "${target_dir}/data/waiting/"
 	cp -R "${source_dir}/people/." "${target_dir}/data/people/"
+}
+
+copy_release_docs() {
+	local target_dir="$1"
+	local readme="${ROOT}/README.md"
+	local changelog="${ROOT}/CHANGELOG.md"
+	[[ -f "${readme}" ]] || die "README not found in repository: ${readme}"
+	[[ -f "${changelog}" ]] || die "CHANGELOG not found in repository: ${changelog}"
+	cp "${readme}" "${target_dir}/README.md"
+	cp "${changelog}" "${target_dir}/CHANGELOG.md"
 }
 
 write_project_cursor_config() {
@@ -231,13 +244,16 @@ BIN_PATH="${TARGET_DIR}/bin/waiting-mcp"
 log "repository: ${ROOT}"
 log "target: ${TARGET_DIR}"
 
-mkdir -p "${TARGET_DIR}/bin" "${TARGET_DIR}/data/waiting" "${TARGET_DIR}/data/people"
+mkdir -p "${TARGET_DIR}/bin" "${TARGET_DIR}/data/waiting/done" "${TARGET_DIR}/data/people"
 
 if [[ -f "${BIN_PATH}" && "${FORCE}" -ne 1 ]]; then
 	die "binary already exists: ${BIN_PATH} (use --force to overwrite)"
 fi
 
 install_binary
+
+log "copying README and CHANGELOG..."
+copy_release_docs "${TARGET_DIR}"
 
 if [[ "${WITH_EXAMPLES}" -eq 1 ]]; then
 	log "copying example data..."
@@ -258,8 +274,10 @@ cat <<EOF
 
 Готово.
 
-  binary: ${BIN_PATH}
-  data:   ${TARGET_DIR}/data
+  binary:    ${BIN_PATH}
+  readme:    ${TARGET_DIR}/README.md
+  changelog: ${TARGET_DIR}/CHANGELOG.md
+  data:      ${TARGET_DIR}/data
 
 Запуск:
   WAITING_DATA_DIR="${TARGET_DIR}/data" "${BIN_PATH}" --stdio
