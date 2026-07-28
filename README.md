@@ -57,10 +57,14 @@ chmod +x ./scripts/deploy.sh
 ```
 <target-dir>/
 ├── bin/waiting-mcp
+├── README.md
+├── CHANGELOG.md
 └── data/
     ├── waiting/
     └── people/
 ```
+
+Текущая версия: **0.2.0** (см. `CHANGELOG.md`).
 
 ## Запуск
 

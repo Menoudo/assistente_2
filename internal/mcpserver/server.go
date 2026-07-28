@@ -8,13 +8,14 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/priahin-i/assistente_2/internal/mcp/tools"
 	"github.com/priahin-i/assistente_2/internal/store"
+	"github.com/priahin-i/assistente_2/internal/version"
 )
 
 func NewServer(repo store.Repository) *sdkmcp.Server {
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{
 		Name:    "waiting-mcp",
 		Title:   "Waiting For MCP",
-		Version: "0.1.0",
+		Version: version.Version,
 	}, nil)
 
 	waitingTools := tools.NewWaitingTools(repo)
