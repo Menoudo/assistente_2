@@ -5,6 +5,12 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 версии следуют [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-07-28
+
+### Fixed
+
+- `waiting_list` с `status: done` возвращал 0 записей: `IncludeDone` отсекал done даже при явном фильтре по статусу.
+
 ## [0.2.0] - 2026-07-28
 
 ### Added
@@ -26,5 +32,6 @@
 - Транспорты stdio и HTTP (Streamable HTTP).
 - Скрипт `scripts/deploy.sh` и GitHub Actions workflow для тестов.
 
+[0.2.1]: https://github.com/Menoudo/assistente_2/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Menoudo/assistente_2/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Menoudo/assistente_2/releases/tag/v0.1.0

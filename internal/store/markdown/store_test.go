@@ -196,6 +196,45 @@ func TestListWaitingIncludeDone(t *testing.T) {
 	}
 }
 
+func TestListWaitingStatusDone(t *testing.T) {
+	root := t.TempDir()
+	store := mdstore.NewStore(root)
+	ctx := context.Background()
+
+	if err := store.UpsertPerson(ctx, domain.Person{
+		ID: "dev", Name: "Dev", Relation: domain.RelationDeveloper,
+		DefaultCheckCadence: domain.CadenceWeekly, Active: true,
+	}, false); err != nil {
+		t.Fatalf("upsert person: %v", err)
+	}
+
+	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	item := domain.Waiting{
+		ID: "archived-item", Status: domain.StatusActive, Responsible: "dev",
+		ExpectedResult: "Done task", NextCheck: now, Context: domain.ContextWork,
+		CheckHistory: []domain.CheckRecord{{Date: now, Action: "created", Message: "x"}},
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := store.CreateWaiting(ctx, item); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := store.SetWaitingStatus(ctx, "archived-item", domain.StatusDone, &domain.CheckRecord{
+		Date: now, Action: "completed", Message: "done",
+	}); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+
+	doneOnly, err := store.ListWaiting(ctx, domain.WaitingFilter{
+		Status: ptrStatus(domain.StatusDone),
+	})
+	if err != nil {
+		t.Fatalf("list status done: %v", err)
+	}
+	if len(doneOnly) != 1 || doneOnly[0].ID != "archived-item" {
+		t.Fatalf("status done = %+v, want archived-item", doneOnly)
+	}
+}
+
 func TestParseExampleMarkdown(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "data")
 	if _, err := os.Stat(root); err != nil {

@@ -380,10 +380,10 @@ func matchesWaitingFilter(waiting domain.Waiting, filter domain.WaitingFilter) b
 	if filter.Status != nil && waiting.Status != *filter.Status {
 		return false
 	}
-	if !filter.IncludeDone && waiting.Status == domain.StatusDone {
+	if !filter.IncludeDone && waiting.Status == domain.StatusDone && filter.Status == nil {
 		return false
 	}
-	if !filter.IncludeCanceled && waiting.Status == domain.StatusCancelled {
+	if !filter.IncludeCanceled && waiting.Status == domain.StatusCancelled && filter.Status == nil {
 		return false
 	}
 	if filter.Responsible != "" && waiting.Responsible != filter.Responsible {
