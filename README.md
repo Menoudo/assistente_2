@@ -18,10 +18,14 @@ MCP-сервер для управления списком GTD **Waiting For** 
 ```
 data/
 ├── waiting/
-│   └── {id}.md
+│   ├── {id}.md
+│   └── done/
+│       └── {id}.md
 └── people/
     └── {id}.md
 ```
+
+Активные и отменённые ожидания хранятся в `waiting/`. При завершении (`waiting_complete`) карточка автоматически переносится в `waiting/done/`.
 
 ## Сборка
 
@@ -100,7 +104,7 @@ Endpoint: `http://localhost:8080/mcp`
 |------|----------|
 | `waiting_create` | Создать ожидание |
 | `waiting_get` | Получить ожидание |
-| `waiting_list` | Список с фильтрами |
+| `waiting_list` | Список с фильтрами (`status`, `responsible`, `due_before`, `context`, `include_done`) |
 | `waiting_update` | Обновить поля |
 | `waiting_record_check` | Зафиксировать проверку и назначить следующую дату |
 | `waiting_complete` | Завершить |

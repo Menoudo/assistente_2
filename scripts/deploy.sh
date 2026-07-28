@@ -12,6 +12,7 @@ Layout:
   <target-dir>/
     bin/waiting-mcp
     data/waiting/
+    data/waiting/done/
     data/people/
 
 Options:
@@ -231,7 +232,7 @@ BIN_PATH="${TARGET_DIR}/bin/waiting-mcp"
 log "repository: ${ROOT}"
 log "target: ${TARGET_DIR}"
 
-mkdir -p "${TARGET_DIR}/bin" "${TARGET_DIR}/data/waiting" "${TARGET_DIR}/data/people"
+mkdir -p "${TARGET_DIR}/bin" "${TARGET_DIR}/data/waiting/done" "${TARGET_DIR}/data/people"
 
 if [[ -f "${BIN_PATH}" && "${FORCE}" -ne 1 ]]; then
 	die "binary already exists: ${BIN_PATH} (use --force to overwrite)"

@@ -85,6 +85,15 @@ func TestWaitingLifecycle(t *testing.T) {
 		t.Fatalf("complete waiting: %v", err)
 	}
 
+	activePath := filepath.Join(root, "waiting", "feature-release.md")
+	donePath := filepath.Join(root, "waiting", "done", "feature-release.md")
+	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
+		t.Fatalf("active file should be removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(donePath); err != nil {
+		t.Fatalf("done file should exist: %v", err)
+	}
+
 	done, err := store.GetWaiting(ctx, "feature-release")
 	if err != nil {
 		t.Fatalf("get done waiting: %v", err)
@@ -139,6 +148,51 @@ func TestListWaitingDueFilter(t *testing.T) {
 	}
 	if len(due) != 1 || due[0].ID != "due-today" {
 		t.Fatalf("due items = %+v, want only due-today", due)
+	}
+}
+
+func TestListWaitingIncludeDone(t *testing.T) {
+	root := t.TempDir()
+	store := mdstore.NewStore(root)
+	ctx := context.Background()
+
+	if err := store.UpsertPerson(ctx, domain.Person{
+		ID: "dev", Name: "Dev", Relation: domain.RelationDeveloper,
+		DefaultCheckCadence: domain.CadenceWeekly, Active: true,
+	}, false); err != nil {
+		t.Fatalf("upsert person: %v", err)
+	}
+
+	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	active := domain.Waiting{
+		ID: "active-item", Status: domain.StatusActive, Responsible: "dev",
+		ExpectedResult: "Active", NextCheck: now, Context: domain.ContextWork,
+		CheckHistory: []domain.CheckRecord{{Date: now, Action: "created", Message: "x"}},
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := store.CreateWaiting(ctx, active); err != nil {
+		t.Fatalf("create active: %v", err)
+	}
+	if err := store.SetWaitingStatus(ctx, "active-item", domain.StatusDone, &domain.CheckRecord{
+		Date: now, Action: "completed", Message: "done",
+	}); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+
+	withoutDone, err := store.ListWaiting(ctx, domain.WaitingFilter{})
+	if err != nil {
+		t.Fatalf("list without done: %v", err)
+	}
+	if len(withoutDone) != 0 {
+		t.Fatalf("without done = %+v, want empty", withoutDone)
+	}
+
+	withDone, err := store.ListWaiting(ctx, domain.WaitingFilter{IncludeDone: true})
+	if err != nil {
+		t.Fatalf("list with done: %v", err)
+	}
+	if len(withDone) != 1 || withDone[0].ID != "active-item" {
+		t.Fatalf("with done = %+v, want active-item", withDone)
 	}
 }
 

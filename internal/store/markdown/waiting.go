@@ -26,12 +26,50 @@ func (s *Store) waitingDir() string {
 	return filepath.Join(s.root, "waiting")
 }
 
-func (s *Store) peopleDir() string {
-	return filepath.Join(s.root, "people")
+func (s *Store) doneWaitingDir() string {
+	return filepath.Join(s.waitingDir(), "done")
 }
 
-func (s *Store) waitingPath(id string) string {
+func (s *Store) activeWaitingPath(id string) string {
 	return filepath.Join(s.waitingDir(), id+".md")
+}
+
+func (s *Store) doneWaitingPath(id string) string {
+	return filepath.Join(s.doneWaitingDir(), id+".md")
+}
+
+func (s *Store) waitingPathFor(waiting domain.Waiting) string {
+	if waiting.Status == domain.StatusDone {
+		return s.doneWaitingPath(waiting.ID)
+	}
+	return s.activeWaitingPath(waiting.ID)
+}
+
+func (s *Store) locateWaitingPath(id string) (string, error) {
+	activePath := s.activeWaitingPath(id)
+	if _, err := os.Stat(activePath); err == nil {
+		return activePath, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	donePath := s.doneWaitingPath(id)
+	if _, err := os.Stat(donePath); err == nil {
+		return donePath, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	return "", domain.ErrNotFound
+}
+
+func (s *Store) waitingExists(id string) bool {
+	_, err := s.locateWaitingPath(id)
+	return err == nil
+}
+
+func (s *Store) peopleDir() string {
+	return filepath.Join(s.root, "people")
 }
 
 func (s *Store) personPath(id string) string {
@@ -40,6 +78,9 @@ func (s *Store) personPath(id string) string {
 
 func (s *Store) ensureDirs() error {
 	if err := os.MkdirAll(s.waitingDir(), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.doneWaitingDir(), 0o755); err != nil {
 		return err
 	}
 	return os.MkdirAll(s.peopleDir(), 0o755)
@@ -59,13 +100,11 @@ func (s *Store) CreateWaiting(ctx context.Context, waiting domain.Waiting) error
 		}
 		return err
 	}
-	if _, err := os.Stat(s.waitingPath(waiting.ID)); err == nil {
+	if s.waitingExists(waiting.ID) {
 		return domain.ErrAlreadyExists
-	} else if !os.IsNotExist(err) {
-		return err
 	}
 
-	return s.writeWaiting(waiting)
+	return s.saveWaiting(waiting)
 }
 
 func (s *Store) GetWaiting(ctx context.Context, id string) (domain.Waiting, error) {
@@ -86,14 +125,14 @@ func (s *Store) UpdateWaiting(ctx context.Context, waiting domain.Waiting) error
 		}
 		return err
 	}
-	if _, err := os.Stat(s.waitingPath(waiting.ID)); err != nil {
-		if os.IsNotExist(err) {
+	if _, err := s.locateWaitingPath(waiting.ID); err != nil {
+		if err == domain.ErrNotFound {
 			return domain.ErrNotFound
 		}
 		return err
 	}
 	waiting.UpdatedAt = time.Now().UTC()
-	return s.writeWaiting(waiting)
+	return s.saveWaiting(waiting)
 }
 
 func (s *Store) ListWaiting(ctx context.Context, filter domain.WaitingFilter) ([]domain.Waiting, error) {
@@ -101,30 +140,49 @@ func (s *Store) ListWaiting(ctx context.Context, filter domain.WaitingFilter) ([
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entries, err := os.ReadDir(s.waitingDir())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
 	var result []domain.Waiting
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		id := strings.TrimSuffix(entry.Name(), ".md")
-		waiting, err := s.readWaiting(id)
+	for _, dir := range s.listWaitingDirs(filter) {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return nil, err
 		}
-		if !matchesWaitingFilter(waiting, filter) {
-			continue
+
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			id := strings.TrimSuffix(entry.Name(), ".md")
+			waiting, err := s.readWaiting(id)
+			if err != nil {
+				return nil, err
+			}
+			if !matchesWaitingFilter(waiting, filter) {
+				continue
+			}
+			result = append(result, waiting)
 		}
-		result = append(result, waiting)
 	}
 	return result, nil
+}
+
+func (s *Store) listWaitingDirs(filter domain.WaitingFilter) []string {
+	if filter.Status != nil {
+		switch *filter.Status {
+		case domain.StatusDone:
+			return []string{s.doneWaitingDir()}
+		case domain.StatusActive, domain.StatusCancelled:
+			return []string{s.waitingDir()}
+		}
+	}
+
+	dirs := []string{s.waitingDir()}
+	if filter.IncludeDone {
+		dirs = append(dirs, s.doneWaitingDir())
+	}
+	return dirs
 }
 
 func (s *Store) RecordCheck(
@@ -152,7 +210,7 @@ func (s *Store) RecordCheck(
 		waiting.PromisedDeadline = promisedDeadline
 	}
 	waiting.UpdatedAt = time.Now().UTC()
-	return s.writeWaiting(waiting)
+	return s.saveWaiting(waiting)
 }
 
 func (s *Store) SetWaitingStatus(ctx context.Context, id string, status domain.Status, record *domain.CheckRecord) error {
@@ -169,7 +227,7 @@ func (s *Store) SetWaitingStatus(ctx context.Context, id string, status domain.S
 		waiting.CheckHistory = append(waiting.CheckHistory, *record)
 	}
 	waiting.UpdatedAt = time.Now().UTC()
-	return s.writeWaiting(waiting)
+	return s.saveWaiting(waiting)
 }
 
 func (s *Store) ReadWaitingMarkdown(ctx context.Context, id string) (string, error) {
@@ -177,11 +235,12 @@ func (s *Store) ReadWaitingMarkdown(ctx context.Context, id string) (string, err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	data, err := os.ReadFile(s.waitingPath(id))
+	path, err := s.locateWaitingPath(id)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", domain.ErrNotFound
-		}
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return "", err
 	}
 	return string(data), nil
@@ -231,11 +290,13 @@ func (s *Store) RenderDueReviewMarkdown(ctx context.Context, asOf time.Time) (st
 }
 
 func (s *Store) readWaiting(id string) (domain.Waiting, error) {
-	data, err := os.ReadFile(s.waitingPath(id))
+	path, err := s.locateWaitingPath(id)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return domain.Waiting{}, domain.ErrNotFound
-		}
+		return domain.Waiting{}, err
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return domain.Waiting{}, err
 	}
 
@@ -292,12 +353,27 @@ func (s *Store) readWaiting(id string) (domain.Waiting, error) {
 	}, nil
 }
 
-func (s *Store) writeWaiting(waiting domain.Waiting) error {
+func (s *Store) saveWaiting(waiting domain.Waiting) error {
+	currentPath, err := s.locateWaitingPath(waiting.ID)
+	if err != nil && err != domain.ErrNotFound {
+		return err
+	}
+
+	targetPath := s.waitingPathFor(waiting)
 	data, err := renderWaitingDocument(waiting)
 	if err != nil {
 		return err
 	}
-	return atomicWrite(s.waitingPath(waiting.ID), data)
+	if err := atomicWrite(targetPath, data); err != nil {
+		return err
+	}
+
+	if err == nil && currentPath != "" && currentPath != targetPath {
+		if removeErr := os.Remove(currentPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			return removeErr
+		}
+	}
+	return nil
 }
 
 func matchesWaitingFilter(waiting domain.Waiting, filter domain.WaitingFilter) bool {
