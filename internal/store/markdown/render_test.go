@@ -1,6 +1,7 @@
 package markdown_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,13 @@ func TestRenderAndParseWaitingBody(t *testing.T) {
 	raw, err := store.ReadWaitingMarkdown(t.Context(), "sample")
 	if err != nil {
 		t.Fatalf("read markdown: %v", err)
+	}
+	got, err := store.GetWaiting(t.Context(), waiting.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Notes != waiting.Notes || len(got.CheckHistory) != 1 || got.CheckHistory[0].Action != waiting.CheckHistory[0].Action || got.CheckHistory[0].Message != waiting.CheckHistory[0].Message || !reflect.DeepEqual(got.Tags, waiting.Tags) {
+		t.Fatalf("round trip mismatch: %#v", got)
 	}
 	for _, section := range []string{"## Notes", "## Check history", "expected_result", "next_check"} {
 		if !strings.Contains(raw, section) {

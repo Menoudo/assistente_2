@@ -15,24 +15,13 @@ func normalizePersonName(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
 }
 
-func validatePersonID(id string) error {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return fmt.Errorf("%w: id is required", domain.ErrInvalidInput)
-	}
-	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
-		return fmt.Errorf("%w: invalid person id %q", domain.ErrInvalidInput, id)
-	}
-	return nil
-}
-
 func (s *Store) findPersonIDByName(excludeID, name string) (string, error) {
 	normalized := normalizePersonName(name)
 	if normalized == "" {
 		return "", fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
 	}
 
-	entries, err := os.ReadDir(s.peopleDir())
+	entries, err := s.readDir(s.peopleDir())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -60,11 +49,13 @@ func (s *Store) findPersonIDByName(excludeID, name string) (string, error) {
 }
 
 func (s *Store) UpsertPerson(ctx context.Context, person domain.Person, force bool) error {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
-	if err := validatePersonID(person.ID); err != nil {
+	if err := domain.ValidatePerson(person); err != nil {
 		return err
 	}
 	if err := s.ensureDirs(); err != nil {
@@ -72,7 +63,7 @@ func (s *Store) UpsertPerson(ctx context.Context, person domain.Person, force bo
 	}
 
 	exists := false
-	if _, err := os.Stat(s.personPath(person.ID)); err == nil {
+	if _, err := s.fs.Stat(s.personPath(person.ID)); err == nil {
 		exists = true
 	} else if !os.IsNotExist(err) {
 		return err
@@ -107,18 +98,22 @@ func (s *Store) UpsertPerson(ctx context.Context, person domain.Person, force bo
 }
 
 func (s *Store) GetPerson(ctx context.Context, id string) (domain.Person, error) {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return domain.Person{}, err
+	}
+	defer unlock()
 	return s.readPerson(id)
 }
 
 func (s *Store) ListPeople(ctx context.Context) ([]domain.Person, error) {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 
-	entries, err := os.ReadDir(s.peopleDir())
+	entries, err := s.readDir(s.peopleDir())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -142,11 +137,16 @@ func (s *Store) ListPeople(ctx context.Context) ([]domain.Person, error) {
 }
 
 func (s *Store) ReadPersonMarkdown(ctx context.Context, id string) (string, error) {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 
-	data, err := os.ReadFile(s.personPath(id))
+	if err := domain.ValidateID(id); err != nil {
+		return "", err
+	}
+	data, err := s.fs.ReadFile(s.personPath(id))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", domain.ErrNotFound
@@ -157,7 +157,10 @@ func (s *Store) ReadPersonMarkdown(ctx context.Context, id string) (string, erro
 }
 
 func (s *Store) readPerson(id string) (domain.Person, error) {
-	data, err := os.ReadFile(s.personPath(id))
+	if err := domain.ValidateID(id); err != nil {
+		return domain.Person{}, err
+	}
+	data, err := s.fs.ReadFile(s.personPath(id))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return domain.Person{}, domain.ErrNotFound
@@ -206,5 +209,5 @@ func (s *Store) writePerson(person domain.Person) error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(s.personPath(person.ID), data)
+	return s.atomicWrite(s.personPath(person.ID), data)
 }

@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
+	_ "time/tzdata"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/priahin-i/assistente_2/internal/config"
@@ -15,7 +17,11 @@ import (
 func main() {
 	cfg := config.Load()
 	repo := mdstore.NewStore(cfg.DataDir)
-	server := mcpserver.NewServer(repo)
+	location, err := time.LoadLocation(cfg.TimeZone)
+	if err != nil {
+		log.Fatalf("invalid timezone %q: %v", cfg.TimeZone, err)
+	}
+	server := mcpserver.NewServer(repo, location)
 
 	ctx := context.Background()
 	errCh := make(chan error, 2)

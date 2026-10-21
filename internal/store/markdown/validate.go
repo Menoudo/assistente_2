@@ -170,7 +170,7 @@ func formatTimestamp(value time.Time) string {
 	if value.IsZero() {
 		return ""
 	}
-	return value.UTC().Format(time.RFC3339)
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func optionalDate(value string) (*time.Time, error) {

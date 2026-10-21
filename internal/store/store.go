@@ -10,7 +10,7 @@ import (
 type Repository interface {
 	CreateWaiting(ctx context.Context, waiting domain.Waiting) error
 	GetWaiting(ctx context.Context, id string) (domain.Waiting, error)
-	UpdateWaiting(ctx context.Context, waiting domain.Waiting) error
+	UpdateWaiting(ctx context.Context, id string, patch domain.WaitingPatch) (domain.Waiting, error)
 	ListWaiting(ctx context.Context, filter domain.WaitingFilter) ([]domain.Waiting, error)
 	RecordCheck(ctx context.Context, id string, record domain.CheckRecord, nextCheck time.Time, blocker *string, promisedDeadline *time.Time) error
 	SetWaitingStatus(ctx context.Context, id string, status domain.Status, record *domain.CheckRecord) error

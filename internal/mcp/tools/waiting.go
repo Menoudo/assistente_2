@@ -12,11 +12,13 @@ import (
 )
 
 type WaitingTools struct {
-	repo store.Repository
+	repo     store.Repository
+	location *time.Location
+	now      func() time.Time
 }
 
-func NewWaitingTools(repo store.Repository) *WaitingTools {
-	return &WaitingTools{repo: repo}
+func NewWaitingTools(repo store.Repository, location *time.Location) *WaitingTools {
+	return &WaitingTools{repo: repo, location: location, now: time.Now}
 }
 
 type WaitingCreateInput struct {
@@ -45,17 +47,19 @@ type WaitingListInput struct {
 }
 
 type WaitingUpdateInput struct {
-	ID               string   `json:"id" jsonschema:"waiting item id"`
-	Responsible      string   `json:"responsible,omitempty"`
-	ExpectedResult   string   `json:"expected_result,omitempty"`
-	NextCheck        string   `json:"next_check,omitempty"`
-	Context          string   `json:"context,omitempty"`
-	Notes            string   `json:"notes,omitempty"`
-	ResultDeadline   string   `json:"result_deadline,omitempty"`
-	PromisedDeadline string   `json:"promised_deadline,omitempty"`
-	Tags             []string `json:"tags,omitempty"`
-	Blocker          string   `json:"blocker,omitempty"`
-	ClearBlocker     bool     `json:"clear_blocker,omitempty"`
+	ID                    string    `json:"id" jsonschema:"waiting item id"`
+	Responsible           *string   `json:"responsible,omitempty"`
+	ExpectedResult        *string   `json:"expected_result,omitempty"`
+	NextCheck             *string   `json:"next_check,omitempty"`
+	Context               *string   `json:"context,omitempty"`
+	Notes                 *string   `json:"notes,omitempty" jsonschema:"set notes; an empty string clears them"`
+	ResultDeadline        *string   `json:"result_deadline,omitempty"`
+	PromisedDeadline      *string   `json:"promised_deadline,omitempty"`
+	ClearResultDeadline   bool      `json:"clear_result_deadline,omitempty" jsonschema:"remove the result deadline"`
+	ClearPromisedDeadline bool      `json:"clear_promised_deadline,omitempty" jsonschema:"remove the promised deadline"`
+	Tags                  *[]string `json:"tags,omitempty"`
+	Blocker               *string   `json:"blocker,omitempty"`
+	ClearBlocker          bool      `json:"clear_blocker,omitempty"`
 }
 
 type WaitingRecordCheckInput struct {
@@ -87,26 +91,26 @@ type WaitingListResponse struct {
 }
 
 type WaitingReviewDueResponse struct {
-	AsOf  string          `json:"as_of"`
+	AsOf  string           `json:"as_of"`
 	Items []DueWaitingView `json:"items"`
-	Count int             `json:"count"`
+	Count int              `json:"count"`
 }
 
 type WaitingView struct {
-	ID               string   `json:"id"`
-	Status           string   `json:"status"`
-	Responsible      string   `json:"responsible"`
-	ExpectedResult   string   `json:"expected_result"`
-	ResultDeadline   string   `json:"result_deadline,omitempty"`
-	PromisedDeadline string   `json:"promised_deadline,omitempty"`
-	NextCheck        string   `json:"next_check"`
-	Context          string   `json:"context"`
-	Tags             []string `json:"tags,omitempty"`
-	Blocker          string   `json:"blocker,omitempty"`
-	Notes            string   `json:"notes,omitempty"`
+	ID               string            `json:"id"`
+	Status           string            `json:"status"`
+	Responsible      string            `json:"responsible"`
+	ExpectedResult   string            `json:"expected_result"`
+	ResultDeadline   string            `json:"result_deadline,omitempty"`
+	PromisedDeadline string            `json:"promised_deadline,omitempty"`
+	NextCheck        string            `json:"next_check"`
+	Context          string            `json:"context"`
+	Tags             []string          `json:"tags,omitempty"`
+	Blocker          string            `json:"blocker,omitempty"`
+	Notes            string            `json:"notes,omitempty"`
 	CheckHistory     []CheckRecordView `json:"check_history,omitempty"`
-	CreatedAt        string   `json:"created_at"`
-	UpdatedAt        string   `json:"updated_at"`
+	CreatedAt        string            `json:"created_at"`
+	UpdatedAt        string            `json:"updated_at"`
 }
 
 type CheckRecordView struct {
@@ -198,57 +202,32 @@ func (t *WaitingTools) List(ctx context.Context, req *mcp.CallToolRequest, input
 }
 
 func (t *WaitingTools) Update(ctx context.Context, req *mcp.CallToolRequest, input WaitingUpdateInput) (*mcp.CallToolResult, WaitingResponse, error) {
-	_ = req
-	waiting, err := t.repo.GetWaiting(ctx, input.ID)
-	if err != nil {
-		return nil, WaitingResponse{}, err
-	}
-	if input.Responsible != "" {
-		waiting.Responsible = input.Responsible
-	}
-	if input.ExpectedResult != "" {
-		waiting.ExpectedResult = input.ExpectedResult
-	}
-	if input.NextCheck != "" {
-		nextCheck, err := parseDate(input.NextCheck)
-		if err != nil {
-			return nil, WaitingResponse{}, err
-		}
-		waiting.NextCheck = nextCheck
-	}
-	if input.Context != "" {
-		contextValue := domain.Context(input.Context)
-		if !isContext(contextValue) {
-			return nil, WaitingResponse{}, fmt.Errorf("%w: context must be work or personal", domain.ErrInvalidInput)
-		}
-		waiting.Context = contextValue
-	}
-	if input.Notes != "" {
-		waiting.Notes = input.Notes
-	}
-	if input.ResultDeadline != "" {
-		resultDeadline, err := parseDate(input.ResultDeadline)
-		if err != nil {
-			return nil, WaitingResponse{}, err
-		}
-		waiting.ResultDeadline = &resultDeadline
-	}
-	if input.PromisedDeadline != "" {
-		promisedDeadline, err := parseDate(input.PromisedDeadline)
-		if err != nil {
-			return nil, WaitingResponse{}, err
-		}
-		waiting.PromisedDeadline = &promisedDeadline
-	}
-	if input.Tags != nil {
-		waiting.Tags = input.Tags
+	patch := domain.WaitingPatch{Responsible: input.Responsible, ExpectedResult: input.ExpectedResult, Notes: input.Notes, Tags: input.Tags, Blocker: input.Blocker, ClearResultDeadline: input.ClearResultDeadline, ClearPromisedDeadline: input.ClearPromisedDeadline}
+	if (input.ClearResultDeadline && input.ResultDeadline != nil) || (input.ClearPromisedDeadline && input.PromisedDeadline != nil) || (input.ClearBlocker && input.Blocker != nil) {
+		return nil, WaitingResponse{}, fmt.Errorf("%w: cannot set and clear the same field", domain.ErrInvalidInput)
 	}
 	if input.ClearBlocker {
-		waiting.Blocker = ""
-	} else if input.Blocker != "" {
-		waiting.Blocker = input.Blocker
+		empty := ""
+		patch.Blocker = &empty
 	}
-	if err := t.repo.UpdateWaiting(ctx, waiting); err != nil {
+	if input.Context != nil {
+		value := domain.Context(*input.Context)
+		patch.Context = &value
+	}
+	for _, field := range []struct {
+		input  *string
+		output **time.Time
+	}{{input.NextCheck, &patch.NextCheck}, {input.ResultDeadline, &patch.ResultDeadline}, {input.PromisedDeadline, &patch.PromisedDeadline}} {
+		if field.input != nil {
+			value, err := parseDate(*field.input)
+			if err != nil {
+				return nil, WaitingResponse{}, err
+			}
+			*field.output = &value
+		}
+	}
+	waiting, err := t.repo.UpdateWaiting(ctx, input.ID, patch)
+	if err != nil {
 		return nil, WaitingResponse{}, err
 	}
 	return nil, WaitingResponse{Waiting: toWaitingView(waiting)}, nil
@@ -332,7 +311,7 @@ func (t *WaitingTools) Cancel(ctx context.Context, req *mcp.CallToolRequest, inp
 
 func (t *WaitingTools) ReviewDue(ctx context.Context, req *mcp.CallToolRequest, input WaitingReviewDueInput) (*mcp.CallToolResult, WaitingReviewDueResponse, error) {
 	_ = req
-	asOf := time.Now().UTC()
+	asOf := domain.CalendarDate(t.now().In(t.location))
 	if input.AsOf != "" {
 		parsed, err := parseDate(input.AsOf)
 		if err != nil {
@@ -355,7 +334,7 @@ func (t *WaitingTools) ReviewDue(ctx context.Context, req *mcp.CallToolRequest, 
 			ExpectedResult: item.ExpectedResult,
 			NextCheck:      formatDate(item.NextCheck),
 			Blocker:        item.Blocker,
-			DaysOverdue:    daysOverdue(item.NextCheck, asOf),
+			DaysOverdue:    domain.DaysOverdue(item.NextCheck, asOf),
 		})
 	}
 	return nil, WaitingReviewDueResponse{
@@ -462,21 +441,7 @@ func formatTimestamp(value time.Time) string {
 	if value.IsZero() {
 		return ""
 	}
-	return value.UTC().Format(time.RFC3339)
-}
-
-func daysOverdue(nextCheck, asOf time.Time) int {
-	next := dateOnly(nextCheck.UTC())
-	current := dateOnly(asOf.UTC())
-	if !current.After(next) {
-		return 0
-	}
-	return int(current.Sub(next).Hours()/24) + 1
-}
-
-func dateOnly(value time.Time) time.Time {
-	year, month, day := value.Date()
-	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func ptrStatus(status domain.Status) *domain.Status {
