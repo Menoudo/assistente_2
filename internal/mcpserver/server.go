@@ -6,24 +6,25 @@ import (
 	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/priahin-i/assistente_2/internal/domain"
 	"github.com/priahin-i/assistente_2/internal/mcp/tools"
 	"github.com/priahin-i/assistente_2/internal/store"
 	"github.com/priahin-i/assistente_2/internal/version"
 )
 
-func NewServer(repo store.Repository) *sdkmcp.Server {
+func NewServer(repo store.Repository, location *time.Location) *sdkmcp.Server {
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{
 		Name:    "waiting-mcp",
 		Title:   "Waiting For MCP",
 		Version: version.Version,
 	}, nil)
 
-	waitingTools := tools.NewWaitingTools(repo)
+	waitingTools := tools.NewWaitingTools(repo, location)
 	personTools := tools.NewPersonTools(repo)
 
 	registerWaitingTools(server, waitingTools)
 	registerPersonTools(server, personTools)
-	registerResources(server, repo)
+	registerResources(server, repo, location)
 
 	return server
 }
@@ -78,14 +79,14 @@ func registerPersonTools(server *sdkmcp.Server, personTools *tools.PersonTools) 
 	}, wrap(personTools.Get))
 }
 
-func registerResources(server *sdkmcp.Server, repo store.Repository) {
+func registerResources(server *sdkmcp.Server, repo store.Repository, location *time.Location) {
 	server.AddResource(&sdkmcp.Resource{
 		URI:         "waiting://due/today",
 		Name:        "Due waiting review",
-		Description: "Aggregated markdown review of waiting items due today (UTC).",
+		Description: "Aggregated markdown review of waiting items due today in the configured timezone.",
 		MIMEType:    "text/markdown",
 	}, func(ctx context.Context, req *sdkmcp.ReadResourceRequest) (*sdkmcp.ReadResourceResult, error) {
-		content, err := repo.RenderDueReviewMarkdown(ctx, time.Now().UTC())
+		content, err := repo.RenderDueReviewMarkdown(ctx, domain.CalendarDate(time.Now().In(location)))
 		if err != nil {
 			return nil, err
 		}

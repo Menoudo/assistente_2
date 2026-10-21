@@ -3,6 +3,8 @@ package markdown
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 type Store struct {
 	root string
+	fs   *os.Root
 	mu   sync.Mutex
 }
 
@@ -23,7 +26,7 @@ func NewStore(root string) *Store {
 }
 
 func (s *Store) waitingDir() string {
-	return filepath.Join(s.root, "waiting")
+	return "waiting"
 }
 
 func (s *Store) doneWaitingDir() string {
@@ -46,15 +49,18 @@ func (s *Store) waitingPathFor(waiting domain.Waiting) string {
 }
 
 func (s *Store) locateWaitingPath(id string) (string, error) {
+	if err := domain.ValidateID(id); err != nil {
+		return "", err
+	}
 	activePath := s.activeWaitingPath(id)
-	if _, err := os.Stat(activePath); err == nil {
+	if _, err := s.fs.Stat(activePath); err == nil {
 		return activePath, nil
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
 
 	donePath := s.doneWaitingPath(id)
-	if _, err := os.Stat(donePath); err == nil {
+	if _, err := s.fs.Stat(donePath); err == nil {
 		return donePath, nil
 	} else if !os.IsNotExist(err) {
 		return "", err
@@ -63,13 +69,8 @@ func (s *Store) locateWaitingPath(id string) (string, error) {
 	return "", domain.ErrNotFound
 }
 
-func (s *Store) waitingExists(id string) bool {
-	_, err := s.locateWaitingPath(id)
-	return err == nil
-}
-
 func (s *Store) peopleDir() string {
-	return filepath.Join(s.root, "people")
+	return "people"
 }
 
 func (s *Store) personPath(id string) string {
@@ -77,72 +78,86 @@ func (s *Store) personPath(id string) string {
 }
 
 func (s *Store) ensureDirs() error {
-	if err := os.MkdirAll(s.waitingDir(), 0o755); err != nil {
+	if err := s.fs.MkdirAll(s.waitingDir(), 0o755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(s.doneWaitingDir(), 0o755); err != nil {
+	if err := s.fs.MkdirAll(s.doneWaitingDir(), 0o755); err != nil {
 		return err
 	}
-	return os.MkdirAll(s.peopleDir(), 0o755)
+	return s.fs.MkdirAll(s.peopleDir(), 0o755)
 }
 
 func (s *Store) CreateWaiting(ctx context.Context, waiting domain.Waiting) error {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
+	if err := domain.ValidateWaiting(waiting); err != nil {
+		return err
+	}
 	if err := s.ensureDirs(); err != nil {
 		return err
 	}
-	if _, err := os.Stat(s.personPath(waiting.Responsible)); err != nil {
-		if os.IsNotExist(err) {
+	if _, err := s.readPerson(waiting.Responsible); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
 			return domain.ErrResponsibleAbsent
 		}
 		return err
 	}
-	if s.waitingExists(waiting.ID) {
+	if _, err := s.locateWaitingPath(waiting.ID); err == nil {
 		return domain.ErrAlreadyExists
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return err
 	}
 
 	return s.saveWaiting(waiting)
 }
 
 func (s *Store) GetWaiting(ctx context.Context, id string) (domain.Waiting, error) {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return domain.Waiting{}, err
+	}
+	defer unlock()
 	return s.readWaiting(id)
 }
 
-func (s *Store) UpdateWaiting(ctx context.Context, waiting domain.Waiting) error {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, err := os.Stat(s.personPath(waiting.Responsible)); err != nil {
-		if os.IsNotExist(err) {
-			return domain.ErrResponsibleAbsent
-		}
-		return err
+func (s *Store) UpdateWaiting(ctx context.Context, id string, patch domain.WaitingPatch) (domain.Waiting, error) {
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return domain.Waiting{}, err
 	}
-	if _, err := s.locateWaitingPath(waiting.ID); err != nil {
-		if err == domain.ErrNotFound {
-			return domain.ErrNotFound
-		}
-		return err
+	defer unlock()
+	waiting, err := s.readWaiting(id)
+	if err != nil {
+		return domain.Waiting{}, err
 	}
+	patch.Apply(&waiting)
 	waiting.UpdatedAt = time.Now().UTC()
-	return s.saveWaiting(waiting)
+	if err := domain.ValidateWaiting(waiting); err != nil {
+		return domain.Waiting{}, err
+	}
+	if _, err := s.readPerson(waiting.Responsible); err != nil {
+		return domain.Waiting{}, fmt.Errorf("responsible %q: %w", waiting.Responsible, err)
+	}
+	if err := s.saveWaiting(waiting); err != nil {
+		return domain.Waiting{}, err
+	}
+	return waiting, nil
 }
 
 func (s *Store) ListWaiting(ctx context.Context, filter domain.WaitingFilter) ([]domain.Waiting, error) {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 
 	var result []domain.Waiting
 	for _, dir := range s.listWaitingDirs(filter) {
-		entries, err := os.ReadDir(dir)
+		entries, err := s.readDir(dir)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -193,9 +208,11 @@ func (s *Store) RecordCheck(
 	blocker *string,
 	promisedDeadline *time.Time,
 ) error {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	waiting, err := s.readWaiting(id)
 	if err != nil {
@@ -214,9 +231,11 @@ func (s *Store) RecordCheck(
 }
 
 func (s *Store) SetWaitingStatus(ctx context.Context, id string, status domain.Status, record *domain.CheckRecord) error {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	waiting, err := s.readWaiting(id)
 	if err != nil {
@@ -231,15 +250,17 @@ func (s *Store) SetWaitingStatus(ctx context.Context, id string, status domain.S
 }
 
 func (s *Store) ReadWaitingMarkdown(ctx context.Context, id string) (string, error) {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 
 	path, err := s.locateWaitingPath(id)
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(path)
+	data, err := s.fs.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -266,7 +287,7 @@ func (s *Store) RenderDueReviewMarkdown(ctx context.Context, asOf time.Time) (st
 	}
 
 	for _, waiting := range items {
-		days := daysOverdue(waiting.NextCheck, asOf)
+		days := domain.DaysOverdue(waiting.NextCheck, asOf)
 		builder.WriteString("## ")
 		builder.WriteString(waiting.ID)
 		builder.WriteString("\n\n")
@@ -289,13 +310,18 @@ func (s *Store) RenderDueReviewMarkdown(ctx context.Context, asOf time.Time) (st
 	return builder.String(), nil
 }
 
-func (s *Store) readWaiting(id string) (domain.Waiting, error) {
+func (s *Store) readWaiting(id string) (result domain.Waiting, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("waiting %q: %w", id, err)
+		}
+	}()
 	path, err := s.locateWaitingPath(id)
 	if err != nil {
 		return domain.Waiting{}, err
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := s.fs.ReadFile(path)
 	if err != nil {
 		return domain.Waiting{}, err
 	}
@@ -354,8 +380,11 @@ func (s *Store) readWaiting(id string) (domain.Waiting, error) {
 }
 
 func (s *Store) saveWaiting(waiting domain.Waiting) error {
+	if err := domain.ValidateWaiting(waiting); err != nil {
+		return err
+	}
 	currentPath, err := s.locateWaitingPath(waiting.ID)
-	if err != nil && err != domain.ErrNotFound {
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		return err
 	}
 
@@ -364,12 +393,12 @@ func (s *Store) saveWaiting(waiting domain.Waiting) error {
 	if err != nil {
 		return err
 	}
-	if err := atomicWrite(targetPath, data); err != nil {
+	if err := s.atomicWrite(targetPath, data); err != nil {
 		return err
 	}
 
 	if err == nil && currentPath != "" && currentPath != targetPath {
-		if removeErr := os.Remove(currentPath); removeErr != nil && !os.IsNotExist(removeErr) {
+		if removeErr := s.fs.Remove(currentPath); removeErr != nil && !os.IsNotExist(removeErr) {
 			return removeErr
 		}
 	}
@@ -393,27 +422,13 @@ func matchesWaitingFilter(waiting domain.Waiting, filter domain.WaitingFilter) b
 		return false
 	}
 	if filter.DueOnOrBefore != nil {
-		dueDate := dateOnly(filter.DueOnOrBefore.UTC())
-		nextCheck := dateOnly(waiting.NextCheck.UTC())
+		dueDate := domain.CalendarDate(*filter.DueOnOrBefore)
+		nextCheck := domain.CalendarDate(waiting.NextCheck)
 		if nextCheck.After(dueDate) {
 			return false
 		}
 	}
 	return true
-}
-
-func daysOverdue(nextCheck, asOf time.Time) int {
-	next := dateOnly(nextCheck.UTC())
-	current := dateOnly(asOf.UTC())
-	if !current.After(next) {
-		return 0
-	}
-	return int(current.Sub(next).Hours()/24) + 1
-}
-
-func dateOnly(value time.Time) time.Time {
-	year, month, day := value.Date()
-	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
 
 func ptrStatus(status domain.Status) *domain.Status {
@@ -437,26 +452,4 @@ func itoa(value int) string {
 		return "-" + string(digits)
 	}
 	return string(digits)
-}
-
-func atomicWrite(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	temp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tempPath := temp.Name()
-	if _, err := temp.Write(data); err != nil {
-		temp.Close()
-		os.Remove(tempPath)
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		os.Remove(tempPath)
-		return err
-	}
-	return os.Rename(tempPath, path)
 }
